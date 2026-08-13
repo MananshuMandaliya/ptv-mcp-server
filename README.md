@@ -1,11 +1,9 @@
 # PTV Transit MCP Server
 
-<!-- Demo GIF goes here once recorded, e.g.: -->
-<!-- ![demo](docs/demo.gif) -->
-
 An [MCP](https://modelcontextprotocol.io) server that exposes Victoria's public transport (PTV) GTFS timetable data — trains, trams, and buses — so an LLM (Claude Desktop, Cursor, etc.) can answer natural-language questions about routes, stops, and departure times.
 
 <!-- Demo GIF goes here once recorded -->
+<!-- ![demo](docs/demo.gif) -->
 
 **Data at a glance:** 1,069 routes · 31,971 stops · 333,875 trips · 12.6 million scheduled stop times, across 8 transport modes (metro train, metro tram, metro bus, regional train, regional bus, regional coach, night bus, SkyBus).
 
@@ -81,14 +79,6 @@ ptv-mcp-server/
 **Why guard `run_sql_query` at two layers?** The tool needs to let the model run arbitrary read-only SQL for questions the structured tools don't anticipate, but "arbitrary SQL from an LLM" is a real risk surface. So there are two independent layers: the SQLite connection itself is opened via a read-only URI (`file:...?mode=ro`), which SQLite enforces at the file-handle level regardless of what the query says, and a regex guard rejects anything that isn't a single `SELECT` statement before it's even executed. Either layer alone would probably be enough; both together means one bug in the regex doesn't turn into a write.
 
 **Why index `stop_id`, `trip_id`, `route_id`, and `service_id`?** `stop_times` has 12.6 million rows. Without indexes, `get_next_departures` was a full table scan on every call. With them, lookups return in well under a second even on this dataset size.
-
-## Design decisions
-
-**Why SQLite over a hosted database?** Zero setup for anyone reviewing this project — clone the repo, run one script, and there's a queryable database. No credentials, no server to spin up. For a dataset this size (a single ~12M-row fact table), SQLite with the right indexes is genuinely fast enough that a hosted DB would add operational overhead without a real performance benefit.
-
-**Why guard `run_sql_query` two different ways?** The tool opens the database connection using SQLite's URI mode with `mode=ro`, which makes writes impossible at the file level regardless of what SQL text reaches it. On top of that, the query text itself is checked against a `SELECT`-only pattern and a blocklist of dangerous keywords before it's ever executed. Neither guard alone is bulletproof — the regex could theoretically be evaded by a sufficiently unusual query, and the read-only file handle wouldn't stop a runaway `SELECT` from scanning the whole table — but together they cover each other's gaps. This is defense in depth: assume any single layer can fail, and design so a single failure doesn't lead to a real problem.
-
-**The nested-zip discovery.** Victoria's GTFS distribution isn't flat — each transport mode's folder in the outer zip contains its own `google_transit.zip`, rather than raw `.txt` files. This wasn't documented anywhere I could find before downloading the real file; I found it by writing a small diagnostic script to print the actual zip structure rather than guessing twice. The loader now opens each nested zip in memory (`io.BytesIO`) instead of extracting to disk, so the whole build stays a single script with no manual unzip step.
 
 ## Notes / limitations
 
