@@ -1,9 +1,8 @@
 # PTV Transit MCP Server
 
-An [MCP](https://modelcontextprotocol.io) server that exposes Victoria's public transport (PTV) GTFS timetable data — trains, trams, and buses — so an LLM (Claude Desktop, Cursor, etc.) can answer natural-language questions about routes, stops, and departure times.
+![demo](docs/demo.gif)
 
-<!-- Demo GIF goes here once recorded -->
-<!-- ![demo](docs/demo.gif) -->
+An [MCP](https://modelcontextprotocol.io) server that exposes Victoria's public transport (PTV) GTFS timetable data — trains, trams, and buses — so an LLM (Claude Desktop, Cursor, etc.) can answer natural-language questions about routes, stops, and departure times.
 
 **Data at a glance:** 1,069 routes · 31,971 stops · 333,875 trips · 12.6 million scheduled stop times, across 8 transport modes (metro train, metro tram, metro bus, regional train, regional bus, regional coach, night bus, SkyBus).
 
@@ -60,6 +59,8 @@ This project turns that raw GTFS export into a queryable SQLite database and wra
 - "What time is the next train from Oakleigh station?"
 - "List all tram routes."
 - "How many stops does the Frankston line have?" (via the raw SQL tool)
+
+![example query screenshot](docs/query-screenshot.png)
 
 ## Project structure
 
