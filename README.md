@@ -25,7 +25,7 @@ This project turns that raw GTFS export into a queryable SQLite database and wra
 
 2. **Clone this repo and install dependencies:**
    ```powershell
-   git clone https://github.com/<your-username>/ptv-mcp-server.git
+   git clone https://github.com/MananshuMandaliya/ptv-mcp-server.git
    cd ptv-mcp-server
    uv sync
    ```
