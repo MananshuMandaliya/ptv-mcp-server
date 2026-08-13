@@ -1,0 +1,14 @@
+# Data (large, regenerable, and not ours to redistribute)
+data/*.zip
+data/*.db
+
+# Python
+__pycache__/
+*.pyc
+.venv/
+*.egg-info/
+
+# Editor/OS
+.vscode/
+.idea/
+.DS_Store
