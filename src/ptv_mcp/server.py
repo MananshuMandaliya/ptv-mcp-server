@@ -12,12 +12,14 @@ Or install into Claude Desktop:
 
 import re
 import sqlite3
+import time
 from pathlib import Path
 from typing import Any
 
 from mcp.server.fastmcp import FastMCP
 
 DB_PATH = Path(__file__).resolve().parent.parent.parent / "data" / "ptv.db"
+QUERY_TIMEOUT_SECONDS = 5
 
 mcp = FastMCP("PTV Transit Data")
 
@@ -158,7 +160,15 @@ def run_sql_query(query: str) -> list[dict[str, Any]]:
 
     Only SELECT statements are permitted. Available tables: routes, stops,
     trips, stop_times, calendar (each has a gtfs_mode column identifying the
-    transport mode). Use the ptv://schema resource to see column details.
+    transport mode), plus two precomputed rollup tables for fast aggregate
+    questions: route_trip_counts (route_id, route_short_name, gtfs_mode,
+    trip_count) and stop_departure_counts (stop_id, stop_name, gtfs_mode,
+    departure_count). Prefer the rollup tables over aggregating stop_times
+    or trips directly — stop_times alone has ~12 million rows, and a raw
+    GROUP BY over it can take several seconds to tens of seconds.
+
+    Use the ptv://schema resource to see full column details. Queries that
+    run longer than a few seconds are aborted automatically.
 
     Args:
         query: A single SQL SELECT statement.
@@ -171,10 +181,35 @@ def run_sql_query(query: str) -> list[dict[str, Any]]:
         raise ValueError("Only a single statement is permitted per query.")
 
     conn = get_connection()
+    start = time.monotonic()
+
+    def abort_if_too_slow() -> int:
+        # SQLite calls this periodically during query execution (roughly
+        # every N virtual-machine instructions, set below). Returning
+        # non-zero tells SQLite to abort the query immediately, which
+        # raises sqlite3.OperationalError("interrupted") below. Without
+        # this, a query like "GROUP BY over the full 12M-row stop_times
+        # table with no filter" can legitimately take 10+ seconds, which
+        # is long enough to time out the calling MCP client entirely.
+        return 1 if (time.monotonic() - start) > QUERY_TIMEOUT_SECONDS else 0
+
+    conn.set_progress_handler(abort_if_too_slow, 1000)
+
     try:
         cur = conn.execute(query)
         rows = cur.fetchmany(200)  # hard cap to avoid dumping huge result sets
         return rows_to_dicts(rows)
+    except sqlite3.OperationalError as e:
+        if "interrupted" in str(e).lower():
+            raise ValueError(
+                f"Query aborted after exceeding the {QUERY_TIMEOUT_SECONDS}s "
+                "limit. This usually means it's scanning the full stop_times "
+                "table (~12M rows). Try filtering by gtfs_mode or stop_id/"
+                "route_id first, or use route_trip_counts / "
+                "stop_departure_counts for aggregate questions instead of "
+                "grouping stop_times or trips directly."
+            ) from None
+        raise
     finally:
         conn.close()
 
@@ -187,7 +222,15 @@ def get_schema() -> str:
     """
     conn = get_connection()
     try:
-        tables = ["routes", "stops", "trips", "stop_times", "calendar"]
+        tables = [
+            "routes",
+            "stops",
+            "trips",
+            "stop_times",
+            "calendar",
+            "route_trip_counts",
+            "stop_departure_counts",
+        ]
         lines = []
         for table in tables:
             cur = conn.execute(f"PRAGMA table_info({table})")
@@ -195,7 +238,12 @@ def get_schema() -> str:
             if not cols:
                 continue
             col_desc = ", ".join(f"{c['name']} ({c['type']})" for c in cols)
-            lines.append(f"{table}: {col_desc}")
+            note = ""
+            if table == "stop_times":
+                note = "  -- ~12M rows; avoid unfiltered GROUP BY on this table"
+            elif table in ("route_trip_counts", "stop_departure_counts"):
+                note = "  -- precomputed rollup, use this instead of aggregating raw tables"
+            lines.append(f"{table}: {col_desc}{note}")
         return "\n\n".join(lines)
     finally:
         conn.close()

@@ -130,6 +130,40 @@ def build() -> None:
     cur.execute("CREATE INDEX IF NOT EXISTS idx_trips_service_id ON trips(service_id)")
     cur.execute("CREATE INDEX IF NOT EXISTS idx_stops_stop_name ON stops(stop_name)")
     conn.commit()
+
+    # Precomputed rollups. GROUP BY over the full stop_times table (~12M
+    # rows) at query time took 10+ seconds in testing -- long enough to
+    # time out an MCP client. Computing these once at build time turns
+    # "busiest stop/route" questions into a lookup against a table with
+    # only as many rows as there are stops/routes (tens of thousands, not
+    # millions), which is effectively instant.
+    print("Building rollup tables...")
+    cur.execute("DROP TABLE IF EXISTS route_trip_counts")
+    cur.execute(
+        """
+        CREATE TABLE route_trip_counts AS
+        SELECT r.route_id, r.route_short_name, r.gtfs_mode, COUNT(*) AS trip_count
+        FROM trips t
+        JOIN routes r ON r.route_id = t.route_id
+        GROUP BY r.route_id
+        """
+    )
+    cur.execute("CREATE INDEX idx_route_trip_counts_count ON route_trip_counts(trip_count)")
+
+    cur.execute("DROP TABLE IF EXISTS stop_departure_counts")
+    cur.execute(
+        """
+        CREATE TABLE stop_departure_counts AS
+        SELECT s.stop_id, s.stop_name, s.gtfs_mode, COUNT(*) AS departure_count
+        FROM stop_times st
+        JOIN stops s ON s.stop_id = st.stop_id
+        GROUP BY s.stop_id
+        """
+    )
+    cur.execute("CREATE INDEX idx_stop_departure_counts_count ON stop_departure_counts(departure_count)")
+    conn.commit()
+    print("  done")
+
     conn.close()
 
     print(f"\nDone. Database written to {DB_PATH}")
