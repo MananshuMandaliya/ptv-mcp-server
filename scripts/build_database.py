@@ -16,6 +16,7 @@ Usage:
     3. Run: uv run python scripts/build_database.py
 """
 
+import io
 import sqlite3
 import zipfile
 from pathlib import Path
@@ -61,11 +62,21 @@ def find_branch_folders(zf: zipfile.ZipFile) -> dict[str, str]:
     return {d: BRANCH_LABELS.get(d, f"branch_{d}") for d in sorted(top_level_dirs)}
 
 
-def load_gtfs_file(zf: zipfile.ZipFile, folder: str, filename: str) -> pd.DataFrame | None:
-    path = f"{folder}/{filename}"
-    if path not in zf.namelist():
+def open_branch_zip(outer_zf: zipfile.ZipFile, folder: str) -> zipfile.ZipFile | None:
+    """Each branch folder in Victoria's GTFS.zip contains a nested
+    google_transit.zip rather than raw .txt files. Open it in memory
+    (no need to extract to disk) and return a ZipFile over it.
+    """
+    nested_path = f"{folder}/google_transit.zip"
+    if nested_path not in outer_zf.namelist():
         return None
-    with zf.open(path) as f:
+    return zipfile.ZipFile(io.BytesIO(outer_zf.read(nested_path)))
+
+
+def load_gtfs_file(inner_zf: zipfile.ZipFile, filename: str) -> pd.DataFrame | None:
+    if filename not in inner_zf.namelist():
+        return None
+    with inner_zf.open(filename) as f:
         return pd.read_csv(f, low_memory=False)
 
 
@@ -90,12 +101,17 @@ def build() -> None:
         combined: dict[str, list[pd.DataFrame]] = {t: [] for t in GTFS_TABLES.values()}
 
         for folder, label in branches.items():
-            for filename, table_name in GTFS_TABLES.items():
-                df = load_gtfs_file(zf, folder, filename)
-                if df is None:
-                    continue
-                df["gtfs_mode"] = label
-                combined[table_name].append(df)
+            inner_zf = open_branch_zip(zf, folder)
+            if inner_zf is None:
+                print(f"  (no google_transit.zip found in branch {folder}, skipping)")
+                continue
+            with inner_zf:
+                for filename, table_name in GTFS_TABLES.items():
+                    df = load_gtfs_file(inner_zf, filename)
+                    if df is None:
+                        continue
+                    df["gtfs_mode"] = label
+                    combined[table_name].append(df)
 
         for table_name, frames in combined.items():
             if not frames:
